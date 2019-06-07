@@ -19,7 +19,12 @@ const READ_SIZE: usize = 256;
 const PROG_SIZE: usize = 256;
 const BLOCK_SIZE: usize = 4096;
 const BLOCK_COUNT: usize = 32;
-const LOOKAHEAD: usize = 128;
+const BLOCK_CYCLES: usize = 0; // set to >0 for wear leveling
+const LOOKAHEAD_SIZE: usize = 128;
+// must be multiple of READ/PROG, factor of BLOCK sizes
+// NB: `test_validate_big_file` fails for CACHE_SIZE = 512
+// Q: RamStorage limitation?
+const CACHE_SIZE: usize = 256;
 
 use core::{cmp, fmt, mem, ptr, slice};
 use littlefs_sys as lfs;
@@ -216,8 +221,8 @@ fn strlen(txt: *const cty::c_char) -> usize {
     return i;
 }
 
-/// Definition of file open flags which can be mixed and matched as appropriate. These definitions
-/// are reminiscent of the ones defined by POSIX.
+// Definition of file open flags which can be mixed and matched as appropriate. These definitions
+// are reminiscent of the ones defined by POSIX.
 bitflags! {
     pub struct FileOpenFlags: u32 {
         /// Open file in read only mode.
@@ -274,9 +279,9 @@ pub struct LittleFs<T: Storage> {
     storage: T,
     lfs_config: lfs::lfs_config,
     lfs: lfs::lfs_t,
-    read_buffer: [u8; READ_SIZE],
-    prog_buffer: [u8; PROG_SIZE],
-    lookahead_buffer: [u8; LOOKAHEAD / 8],
+    read_buffer: [u8; CACHE_SIZE],
+    prog_buffer: [u8; CACHE_SIZE],
+    lookahead_buffer: [u8; LOOKAHEAD_SIZE / 8],
 }
 
 /// Interface to the LittleFS.
@@ -287,9 +292,9 @@ impl<T: Storage> LittleFs<T> {
             storage: storage,
             lfs: unsafe { mem::uninitialized::<lfs::lfs>() },
             lfs_config: unsafe { mem::uninitialized::<lfs::lfs_config>() },
-            read_buffer: [0u8; READ_SIZE],
-            prog_buffer: [0u8; PROG_SIZE],
-            lookahead_buffer: [0u8; LOOKAHEAD / 8],
+            read_buffer: [0u8; CACHE_SIZE],
+            prog_buffer: [0u8; CACHE_SIZE],
+            lookahead_buffer: [0u8; LOOKAHEAD_SIZE / 8],
         }
     }
 
@@ -372,6 +377,10 @@ impl<T: Storage> LittleFs<T> {
         cstr_path[..len].copy_from_slice(&path.as_bytes()[..len]);
         let file_cfg = lfs::lfs_file_config {
             buffer: file.buffer.as_mut_ptr() as *mut cty::c_void,
+            // TODO: pass in actual parameters,
+            // for  now just trying to compile
+            attrs: core::ptr::null_mut(),
+            attr_count: 0,
         };
         let res = unsafe {
             lfs::lfs_file_opencfg(
@@ -540,11 +549,16 @@ impl<T: Storage> LittleFs<T> {
             prog_size: PROG_SIZE as u32,
             block_size: BLOCK_SIZE as u32,
             block_count: BLOCK_COUNT as u32,
-            lookahead: LOOKAHEAD as u32,
+            block_cycles: BLOCK_CYCLES as u32,
+            lookahead_size: LOOKAHEAD_SIZE as u32,
+            cache_size: CACHE_SIZE as u32,
             read_buffer: (&mut self.read_buffer) as *mut _ as *mut cty::c_void,
             prog_buffer: (&mut self.prog_buffer) as *mut _ as *mut cty::c_void,
             lookahead_buffer: (&mut self.lookahead_buffer) as *mut _ as *mut cty::c_void,
-            file_buffer: core::ptr::null_mut(),
+            // file_buffer: core::ptr::null_mut(),
+            name_max: 0,
+            file_max: 0,
+            attr_max: 0,
         }
     }
 
